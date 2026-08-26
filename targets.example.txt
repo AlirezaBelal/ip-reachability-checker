@@ -1,0 +1,6 @@
+# Loopback targets are safe for local smoke testing.
+127.0.0.1
+::1
+
+# RFC 5737 documentation address; do not assume it is reachable.
+192.0.2.10
