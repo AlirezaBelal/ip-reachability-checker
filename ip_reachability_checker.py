@@ -52,17 +52,18 @@ def normalize_ip(value: str) -> str:
 
 def _iter_file_targets(path: Path) -> Iterable[str]:
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                value = line.strip()
+                if not value or value.startswith("#"):
+                    continue
+                yield value
     except FileNotFoundError as exc:
         raise ConfigurationError("target file was not found") from exc
     except OSError as exc:
         raise ConfigurationError("target file could not be read") from exc
-
-    for line in text.splitlines():
-        value = line.strip()
-        if not value or value.startswith("#"):
-            continue
-        yield value
+    except UnicodeDecodeError as exc:
+        raise ConfigurationError("target file is not valid UTF-8") from exc
 
 
 def collect_targets(values: Sequence[str], file_path: Path | None = None) -> list[str]:
@@ -76,7 +77,12 @@ def collect_targets(values: Sequence[str], file_path: Path | None = None) -> lis
     targets: list[str] = []
     seen: set[str] = set()
     for raw in raw_targets:
-        target = normalize_ip(raw)
+        try:
+            target = normalize_ip(raw)
+        except ConfigurationError:
+            print(f"Warning: skipping invalid target '{raw}'", file=sys.stderr)
+            continue
+            
         if target in seen:
             continue
         seen.add(target)
@@ -268,6 +274,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         validate_options(args)
         targets = collect_targets(args.targets, args.file)
+        if not targets:
+            raise ConfigurationError("no valid targets provided")
+            
         results = check_targets(
             targets,
             tcp_port=args.tcp_port,
@@ -278,6 +287,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.", file=sys.stderr)
+        return 130
 
     print(render_json(results) if args.json else render_text(results))
     return exit_code_for(results)
