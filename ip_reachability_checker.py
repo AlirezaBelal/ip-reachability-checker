@@ -319,6 +319,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("Interrupted by user.", file=sys.stderr)
+        return 130
 
     print(render_json(results) if args.json else render_text(results))
     return exit_code_for(results)
