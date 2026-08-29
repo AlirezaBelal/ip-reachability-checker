@@ -1,6 +1,6 @@
 # IP Reachability Checker
 
-[![CI](https://github.com/AlirezaBelal/IPReachabilityChecker/actions/workflows/ci.yml/badge.svg)](https://github.com/AlirezaBelal/IPReachabilityChecker/actions/workflows/ci.yml)
+[![CI](https://github.com/AlirezaBelal/ip-reachability-checker/actions/workflows/ci.yml/badge.svg)](https://github.com/AlirezaBelal/ip-reachability-checker/actions/workflows/ci.yml)
 
 A small, dependency-free Python CLI for checking **explicit IPv4/IPv6 targets** with either the operating system's ICMP `ping` command or a single TCP port.
 
@@ -23,10 +23,10 @@ The intended outcomes are:
 - Cross-platform ICMP command construction for Windows, Linux, and macOS.
 - Optional TCP reachability check for one explicit port.
 - Strict IPv4/IPv6 validation with Python's standard-library `ipaddress` module.
-- Batch input from command line or a text file, with deduplication and a 256-target cap.
+- Batch input from command line or a streamed UTF-8 text file, with deduplication and a 256-target cap.
 - Bounded concurrency (`--workers`, maximum 32).
 - Human-readable and JSON output.
-- Automation-friendly exit codes.
+- Automation-friendly exit codes, including clean `Ctrl+C` handling with exit code `130`.
 - No third-party runtime dependencies.
 - Unit tests plus real localhost TCP and cross-platform ICMP smoke tests in CI.
 
@@ -69,7 +69,7 @@ This is a connection check, not a port scanner: the CLI accepts only one `--tcp-
 python ip_reachability_checker.py --file targets.example.txt
 ```
 
-The file format is one IP per line. Blank lines and lines beginning with `#` are ignored. CLI targets and file targets can be combined and are deduplicated.
+The file format is one IP per line. Blank lines and lines beginning with `#` are ignored. UTF-8 BOM is accepted. CLI targets and file targets can be combined and are deduplicated. Invalid targets fail fast instead of being silently skipped, which keeps automation inputs deterministic.
 
 ### JSON output
 
@@ -103,7 +103,7 @@ Example shape:
 
 - `reachable` — the OS ping command returned success, or the TCP connection completed.
 - `unreachable` — the ping attempt timed out/returned a normal non-success result, or the TCP connection could not be established within the configured timeout.
-- `error` — the reachability check itself could not run, for example because the local `ping` executable is missing.
+- `error` — the reachability check itself could not run, for example because the local `ping` executable is missing or a local socket resource error occurs.
 
 The tool deliberately does **not** claim to distinguish "filtered" from "unreachable". ICMP may be blocked even when a host is otherwise reachable, and TCP results are specific to the selected port.
 
@@ -114,6 +114,7 @@ The tool deliberately does **not** claim to distinguish "filtered" from "unreach
 | `0` | All targets were reachable |
 | `1` | At least one target was unreachable |
 | `2` | Invalid configuration/input or an operational check error occurred |
+| `130` | Execution was interrupted by the operator (`Ctrl+C`) |
 
 ## Safety boundaries
 
@@ -138,7 +139,7 @@ Run all tests:
 python -m unittest discover -s tests -v
 ```
 
-The test suite covers validation, deduplication, option limits, Windows/Linux/macOS ping command construction, ICMP process outcomes, JSON/exit-code semantics, and a real TCP connection against a temporary listener bound only to `127.0.0.1`.
+The test suite covers validation, streamed target-file handling, deduplication, option limits, Windows/Linux/macOS ping command construction, ICMP/TCP result classification, JSON/exit-code semantics, clean interruption behavior, and a real TCP connection against a temporary listener bound only to `127.0.0.1`.
 
 GitHub Actions also runs a real localhost ICMP smoke check on Ubuntu, Windows, and macOS. CI never probes an external target.
 
