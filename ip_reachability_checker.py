@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+import errno
 import ipaddress
 import json
 import math
@@ -15,11 +16,34 @@ import socket
 import subprocess
 import sys
 import time
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 MAX_TARGETS = 256
 MAX_WORKERS = 32
 MAX_PING_COUNT = 10
+
+_NETWORK_FAILURE_ERRNOS = {
+    value
+    for name in (
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "EHOSTUNREACH",
+        "ENETUNREACH",
+        "EHOSTDOWN",
+        "ENETDOWN",
+    )
+    if (value := getattr(errno, name, None)) is not None
+}
+_WINDOWS_NETWORK_FAILURES = {
+    10050,  # WSAENETDOWN
+    10051,  # WSAENETUNREACH
+    10054,  # WSAECONNRESET
+    10060,  # WSAETIMEDOUT
+    10061,  # WSAECONNREFUSED
+    10064,  # WSAEHOSTDOWN
+    10065,  # WSAEHOSTUNREACH
+}
 
 
 class ConfigurationError(ValueError):
@@ -52,17 +76,16 @@ def normalize_ip(value: str) -> str:
 
 def _iter_file_targets(path: Path) -> Iterable[str]:
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8-sig") as handle:
+            for line in handle:
+                value = line.strip()
+                if not value or value.startswith("#"):
+                    continue
+                yield value
     except FileNotFoundError as exc:
         raise ConfigurationError("target file was not found") from exc
     except OSError as exc:
         raise ConfigurationError("target file could not be read") from exc
-
-    for line in text.splitlines():
-        value = line.strip()
-        if not value or value.startswith("#"):
-            continue
-        yield value
 
 
 def collect_targets(values: Sequence[str], file_path: Path | None = None) -> list[str]:
@@ -164,20 +187,38 @@ def check_icmp(
     return ReachabilityResult(target, "icmp", "error", latency_ms=latency_ms, detail="ping exited with an operational error")
 
 
-def check_tcp(ip: str, port: int, timeout_seconds: float = 1.0) -> ReachabilityResult:
+def _is_network_failure(exc: OSError) -> bool:
+    return exc.errno in _NETWORK_FAILURE_ERRNOS or getattr(exc, "winerror", None) in _WINDOWS_NETWORK_FAILURES
+
+
+def check_tcp(
+    ip: str,
+    port: int,
+    timeout_seconds: float = 1.0,
+    *,
+    connector: Callable[..., object] = socket.create_connection,
+) -> ReachabilityResult:
     """Attempt one TCP connection to an explicit IP and one explicit port."""
     target = normalize_ip(ip)
     started = time.perf_counter()
     try:
-        with socket.create_connection((target, port), timeout=timeout_seconds):
+        with connector((target, port), timeout=timeout_seconds):
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
             return ReachabilityResult(target, "tcp", "reachable", latency_ms=latency_ms, detail=f"port {port}")
     except (ConnectionRefusedError, TimeoutError, socket.timeout):
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return ReachabilityResult(target, "tcp", "unreachable", latency_ms=latency_ms, detail=f"port {port}")
-    except OSError:
+    except OSError as exc:
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        return ReachabilityResult(target, "tcp", "unreachable", latency_ms=latency_ms, detail=f"port {port}")
+        if _is_network_failure(exc):
+            return ReachabilityResult(target, "tcp", "unreachable", latency_ms=latency_ms, detail=f"port {port}")
+        return ReachabilityResult(
+            target,
+            "tcp",
+            "error",
+            latency_ms=latency_ms,
+            detail="TCP check failed locally",
+        )
 
 
 def check_targets(
