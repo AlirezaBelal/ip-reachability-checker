@@ -1,8 +1,22 @@
 # IP Reachability Checker
 
+[![CI](https://github.com/AlirezaBelal/IPReachabilityChecker/actions/workflows/ci.yml/badge.svg)](https://github.com/AlirezaBelal/IPReachabilityChecker/actions/workflows/ci.yml)
+
 A small, dependency-free Python CLI for checking **explicit IPv4/IPv6 targets** with either the operating system's ICMP `ping` command or a single TCP port.
 
 The project is intentionally bounded: it validates literal IP addresses, does not expand CIDR ranges, does not scan multiple ports, and never invokes a shell.
+
+## Product / operational context
+
+The operational question this tool answers is deliberately narrow:
+
+**Given a known list of infrastructure endpoints, which targets are reachable right now through ICMP or one expected TCP service port?**
+
+The design favors predictable diagnostics over broad discovery. Operators get validated input, bounded concurrency, machine-readable output, explicit status semantics, and stable exit codes without turning the utility into a network scanner.
+
+The intended outcomes are:
+
+**fast triage · deterministic automation · cross-platform behavior · low operational risk**
 
 ## Highlights
 
