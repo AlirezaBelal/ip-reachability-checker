@@ -1,3 +1,4 @@
+import errno
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from ip_reachability_checker import (
     ReachabilityResult,
     build_ping_command,
     check_icmp,
+    check_tcp,
     collect_targets,
     exit_code_for,
     normalize_ip,
@@ -33,6 +35,12 @@ class TargetValidationTests(unittest.TestCase):
             path.write_text("# example\n192.0.2.10\n\n2001:db8::1\n", encoding="utf-8")
             targets = collect_targets(["192.0.2.10"], path)
             self.assertEqual(targets, ["192.0.2.10", "2001:db8::1"])
+
+    def test_target_file_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "targets.txt"
+            path.write_bytes(b"\xef\xbb\xbf192.0.2.10\n")
+            self.assertEqual(collect_targets([], path), ["192.0.2.10"])
 
 
 class PingCommandTests(unittest.TestCase):
@@ -68,9 +76,29 @@ class IcmpResultTests(unittest.TestCase):
     def test_missing_ping_is_controlled_error(self):
         def runner(*args, **kwargs):
             raise FileNotFoundError
+
         result = check_icmp("192.0.2.10", runner=runner, system_name="Linux")
         self.assertEqual(result.status, "error")
         self.assertNotIn("192.0.2.10", result.detail)
+
+
+class TcpResultTests(unittest.TestCase):
+    def test_network_unreachable_is_classified_as_unreachable(self):
+        def connector(*args, **kwargs):
+            raise OSError(errno.ENETUNREACH, "network unreachable")
+
+        result = check_tcp("192.0.2.10", 443, connector=connector)
+        self.assertEqual(result.status, "unreachable")
+        self.assertEqual(exit_code_for([result]), 1)
+
+    def test_local_resource_error_is_classified_as_error(self):
+        def connector(*args, **kwargs):
+            raise OSError(errno.EMFILE, "too many open files")
+
+        result = check_tcp("192.0.2.10", 443, connector=connector)
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.detail, "TCP check failed locally")
+        self.assertEqual(exit_code_for([result]), 2)
 
 
 class CliSemanticsTests(unittest.TestCase):
