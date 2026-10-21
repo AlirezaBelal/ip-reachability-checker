@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from ip_reachability_checker import (
     ConfigurationError,
@@ -41,6 +42,39 @@ class TargetValidationTests(unittest.TestCase):
             path = Path(temp_dir) / "targets.txt"
             path.write_bytes(b"\xef\xbb\xbf192.0.2.10\n")
             self.assertEqual(collect_targets([], path), ["192.0.2.10"])
+
+    def test_file_errors_are_configuration_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.txt"
+            for content in (b"", b"# comment\n\n", b"\xff"):
+                path.write_bytes(content)
+                with self.subTest(content=content), self.assertRaises(ConfigurationError):
+                    collect_targets([], path)
+            path.unlink()
+            with self.assertRaises(ConfigurationError):
+                collect_targets([], path)
+            with patch.object(Path, "open", side_effect=PermissionError):
+                with self.assertRaises(ConfigurationError):
+                    collect_targets([], path)
+
+    def test_target_limit_stops_consuming_file(self):
+        def targets():
+            for number in range(257):
+                yield f"192.0.{number // 256}.{number % 256}"
+            self.fail("Read past the unique target limit")
+
+        with patch("ip_reachability_checker._iter_file_targets", return_value=targets()):
+            with self.assertRaisesRegex(ConfigurationError, "at most 256"):
+                collect_targets([], Path("unused"))
+
+    def test_file_validation_stops_at_first_invalid_target(self):
+        def targets():
+            yield "not-an-ip"
+            self.fail("Read past invalid input")
+
+        with patch("ip_reachability_checker._iter_file_targets", return_value=targets()):
+            with self.assertRaises(ConfigurationError):
+                collect_targets([], Path("unused"))
 
 
 class PingCommandTests(unittest.TestCase):
@@ -81,6 +115,19 @@ class IcmpResultTests(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertNotIn("192.0.2.10", result.detail)
 
+    def test_short_response_timeout_allows_packet_spacing(self):
+        for system in ("Linux", "Windows", "Darwin"):
+            def runner(command, **kwargs):
+                # Ten loopback packets need roughly nine seconds at default spacing.
+                if kwargs["timeout"] < 10:
+                    raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                return subprocess.CompletedProcess(command, 0)
+
+            with self.subTest(system=system):
+                result = check_icmp("127.0.0.1", count=10, timeout_seconds=0.1,
+                                    runner=runner, system_name=system)
+                self.assertEqual(result.status, "reachable")
+
 
 class TcpResultTests(unittest.TestCase):
     def test_network_unreachable_is_classified_as_unreachable(self):
@@ -100,6 +147,17 @@ class TcpResultTests(unittest.TestCase):
         self.assertEqual(result.detail, "TCP check failed locally")
         self.assertEqual(exit_code_for([result]), 2)
 
+    def test_windows_network_error_and_unknown_error_are_distinct(self):
+        for winerror, status in ((10065, "unreachable"), (10013, "error")):
+            error = OSError("synthetic socket failure")
+            error.winerror = winerror
+            with self.subTest(winerror=winerror):
+                def connector(*args, **kwargs):
+                    raise error
+
+                self.assertEqual(check_tcp("127.0.0.1", 80, connector=connector).status,
+                                 status)
+
 
 class CliSemanticsTests(unittest.TestCase):
     def test_validate_options_rejects_port_and_worker_overreach(self):
@@ -109,6 +167,12 @@ class CliSemanticsTests(unittest.TestCase):
         args = SimpleNamespace(tcp_port=443, count=2, timeout=1, workers=33)
         with self.assertRaises(ConfigurationError):
             validate_options(args)
+
+    def test_timeout_must_be_finite_and_bounded(self):
+        for timeout in (float("nan"), float("inf"), -float("inf"), 0, -1, 10.1):
+            with self.subTest(timeout=timeout), self.assertRaises(ConfigurationError):
+                validate_options(SimpleNamespace(tcp_port=None, count=2,
+                                                 timeout=timeout, workers=8))
 
     def test_json_and_exit_codes(self):
         results = [

@@ -6,18 +6,6 @@ A small, dependency-free Python CLI for checking **explicit IPv4/IPv6 targets** 
 
 The project is intentionally bounded: it validates literal IP addresses, does not expand CIDR ranges, does not scan multiple ports, and never invokes a shell.
 
-## Product / operational context
-
-The operational question this tool answers is deliberately narrow:
-
-**Given a known list of infrastructure endpoints, which targets are reachable right now through ICMP or one expected TCP service port?**
-
-The design favors predictable diagnostics over broad discovery. Operators get validated input, bounded concurrency, machine-readable output, explicit status semantics, and stable exit codes without turning the utility into a network scanner.
-
-The intended outcomes are:
-
-**fast triage · deterministic automation · cross-platform behavior · low operational risk**
-
 ## Highlights
 
 - Cross-platform ICMP command construction for Windows, Linux, and macOS.
@@ -37,6 +25,16 @@ The intended outcomes are:
 
 TCP mode uses only Python's standard library and does not require `ping`.
 
+## Quick start
+
+Clone the repository; no package installation is needed:
+
+```bash
+git clone https://github.com/AlirezaBelal/ip-reachability-checker.git
+cd ip-reachability-checker
+python ip_reachability_checker.py 127.0.0.1 --count 1
+```
+
 ## Usage
 
 ### ICMP ping
@@ -48,10 +46,10 @@ python ip_reachability_checker.py 127.0.0.1 ::1
 Tune the packet count and timeout:
 
 ```bash
-python ip_reachability_checker.py 192.0.2.10 --count 3 --timeout 1.5
+python ip_reachability_checker.py 127.0.0.1 --count 3 --timeout 1.5
 ```
 
-`192.0.2.0/24` is reserved for documentation; examples do not rely on a public third-party host.
+All executable examples use loopback targets. TCP port 8000 must have a local listener for a reachable result.
 
 ### TCP reachability
 
@@ -66,7 +64,8 @@ This is a connection check, not a port scanner: the CLI accepts only one `--tcp-
 ### Read targets from a file
 
 ```bash
-python ip_reachability_checker.py --file targets.example.txt
+printf "127.0.0.1\n::1\n" > targets.txt
+python ip_reachability_checker.py --file targets.txt
 ```
 
 The file format is one IP per line. Blank lines and lines beginning with `#` are ignored. UTF-8 BOM is accepted. CLI targets and file targets can be combined and are deduplicated. Invalid targets fail fast instead of being silently skipped, which keeps automation inputs deterministic.
@@ -98,6 +97,29 @@ Example shape:
   }
 }
 ```
+
+## Timing and limits
+
+| Option | Default | Allowed |
+| --- | --- | --- |
+| `--count` | 2 | 1–10 ICMP packets |
+| `--timeout` | 1 | 0.1–10 seconds, finite |
+| `--workers` | 8 | 1–32 concurrent targets |
+| `--tcp-port` | ICMP mode | One port, 1–65535 |
+
+`--timeout` is the TCP connection timeout. ICMP uses OS-specific response waits:
+Linux rounds up to whole seconds; Windows and macOS IPv4 use milliseconds.
+macOS `ping6` has no equivalent response-wait option, so only the overall process
+deadline is enforced there. Each ping process is capped at
+`count * (ceil(timeout) + 1) + 2` seconds, allowing default packet spacing and startup.
+
+The historical JSON key `latency_ms` is retained for compatibility. It measures
+**overall check duration**, including process startup and packet spacing for ICMP;
+it is not packet RTT. Text output labels it `duration`. Example values are illustrative.
+
+`Ctrl+C` returns 130 after active bounded checks finish; it does not immediately
+cancel running threads. Input is processed incrementally, but very long lines or
+large duplicate-only files can still consume memory or processing time.
 
 ## Status semantics
 

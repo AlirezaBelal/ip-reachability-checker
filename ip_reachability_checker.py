@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 import errno
 import ipaddress
+from itertools import chain
 import json
 import math
 from pathlib import Path
@@ -82,6 +83,8 @@ def _iter_file_targets(path: Path) -> Iterable[str]:
                 if not value or value.startswith("#"):
                     continue
                 yield value
+    except UnicodeDecodeError as exc:
+        raise ConfigurationError("target file must contain valid UTF-8 text") from exc
     except FileNotFoundError as exc:
         raise ConfigurationError("target file was not found") from exc
     except OSError as exc:
@@ -90,11 +93,7 @@ def _iter_file_targets(path: Path) -> Iterable[str]:
 
 def collect_targets(values: Sequence[str], file_path: Path | None = None) -> list[str]:
     """Validate, deduplicate, and bound explicit target IPs."""
-    raw_targets = list(values)
-    if file_path is not None:
-        raw_targets.extend(_iter_file_targets(file_path))
-    if not raw_targets:
-        raise ConfigurationError("provide at least one IP address or --file")
+    raw_targets = chain(values, _iter_file_targets(file_path) if file_path is not None else ())
 
     targets: list[str] = []
     seen: set[str] = set()
@@ -106,6 +105,8 @@ def collect_targets(values: Sequence[str], file_path: Path | None = None) -> lis
         targets.append(target)
         if len(targets) > MAX_TARGETS:
             raise ConfigurationError(f"at most {MAX_TARGETS} unique IP addresses are allowed")
+    if not targets:
+        raise ConfigurationError("provide at least one IP address or --file")
     return targets
 
 
@@ -162,7 +163,8 @@ def check_icmp(
     """Run the platform ping command and classify by process outcome, not localized text."""
     target = normalize_ip(ip)
     command = build_ping_command(target, count, timeout_seconds, system_name=system_name)
-    deadline = max(2.0, count * timeout_seconds + 2.0)
+    # Allow one-second packet spacing, rounded OS waits, and process startup.
+    deadline = count * (math.ceil(timeout_seconds) + 1) + 2.0
     started = time.perf_counter()
     try:
         completed = runner(
@@ -247,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--file", type=Path, help="Text file containing one explicit IP per line")
     parser.add_argument("--tcp-port", type=int, help="Use a TCP connection check instead of ICMP ping")
     parser.add_argument("--count", type=int, default=2, help="ICMP packets per target (1-10; default: 2)")
-    parser.add_argument("--timeout", type=float, default=1.0, help="Per-attempt timeout in seconds (0.1-10; default: 1)")
+    parser.add_argument("--timeout", type=float, default=1.0, help="Response timeout in seconds (0.1-10; default: 1; OS-dependent in ICMP mode)")
     parser.add_argument("--workers", type=int, default=8, help="Concurrent targets (1-32; default: 8)")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser
@@ -284,7 +286,7 @@ def render_json(results: Sequence[ReachabilityResult]) -> str:
 def render_text(results: Sequence[ReachabilityResult]) -> str:
     lines: list[str] = []
     for result in results:
-        latency = f" {result.latency_ms:.2f}ms" if result.latency_ms is not None else ""
+        latency = f" duration={result.latency_ms:.2f}ms" if result.latency_ms is not None else ""
         detail = f" ({result.detail})" if result.detail else ""
         lines.append(f"{result.ip:<39} {result.status:<11} {result.method}{latency}{detail}")
     summary = _summary(results)
