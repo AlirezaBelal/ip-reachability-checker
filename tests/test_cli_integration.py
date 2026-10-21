@@ -53,6 +53,25 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["method"], "tcp")
         self.assertEqual(payload["results"][0]["status"], "reachable")
 
+    def test_invalid_timeout_and_file_fail_cleanly(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.txt"
+            path.write_bytes(b"\xff")
+            for options in (["--file", str(path)],
+                            ["127.0.0.1", "--timeout", "nan"],
+                            ["127.0.0.1", "--timeout", "inf"]):
+                with self.subTest(options=options):
+                    completed = subprocess.run(
+                        [sys.executable, "ip_reachability_checker.py", *options],
+                        capture_output=True, text=True, timeout=5)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("Configuration error:", completed.stderr)
+                    self.assertNotIn("Traceback", completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
