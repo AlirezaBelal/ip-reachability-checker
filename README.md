@@ -11,7 +11,7 @@ The project is intentionally bounded: it validates literal IP addresses, does no
 - Cross-platform ICMP command construction for Windows, Linux, and macOS.
 - Optional TCP reachability check for one explicit port.
 - Strict IPv4/IPv6 validation with Python's standard-library `ipaddress` module.
-- Batch input from command line or a streamed UTF-8 text file, with deduplication and a 256-target cap.
+- Batch input from command line or a streamed UTF-8 text file, with deduplication, a 256-target cap, and bounded file line/length processing.
 - Bounded concurrency (`--workers`, maximum 32).
 - Human-readable and JSON output.
 - Automation-friendly exit codes, including clean `Ctrl+C` handling with exit code `130`.
@@ -68,7 +68,7 @@ printf "127.0.0.1\n::1\n" > targets.txt
 python ip_reachability_checker.py --file targets.txt
 ```
 
-The file format is one IP per line. Blank lines and lines beginning with `#` are ignored. UTF-8 BOM is accepted. CLI targets and file targets can be combined and are deduplicated. Invalid targets fail fast instead of being silently skipped, which keeps automation inputs deterministic.
+The file format is one IP per line. Blank lines and lines beginning with `#` are ignored, **but count toward the 4,096-line file limit**. Each line is limited to **512 characters**, excluding its line ending; long lines are rejected using bounded reads. UTF-8 BOM is accepted. CLI targets and file targets can be combined and are deduplicated. Invalid targets fail fast instead of being silently skipped, which keeps automation inputs deterministic.
 
 ### JSON output
 
@@ -107,6 +107,8 @@ Example shape:
 | `--workers` | 8 | 1–32 concurrent targets |
 | `--tcp-port` | ICMP mode | One port, 1–65535 |
 
+Target files: at most **4,096 physical lines** of **512 characters** each, including comments and blank lines. This is separate from the **256 unique IPs** limit.
+
 `--timeout` is the TCP connection timeout. ICMP uses OS-specific response waits:
 Linux rounds up to whole seconds; Windows and macOS IPv4 use milliseconds.
 macOS `ping6` has no equivalent response-wait option, so only the overall process
@@ -118,8 +120,9 @@ The historical JSON key `latency_ms` is retained for compatibility. It measures
 it is not packet RTT. Text output labels it `duration`. Example values are illustrative.
 
 `Ctrl+C` returns 130 after active bounded checks finish; it does not immediately
-cancel running threads. Input is processed incrementally, but very long lines or
-large duplicate-only files can still consume memory or processing time.
+cancel running threads. Target files are processed incrementally with bounded
+line lengths and line counts, even for duplicate-only or comment-only input.
+Very large command-line argument lists remain subject to OS/terminal limits.
 
 ## Status semantics
 
@@ -163,7 +166,7 @@ python -m unittest discover -s tests -v
 
 The test suite covers validation, streamed target-file handling, deduplication, option limits, Windows/Linux/macOS ping command construction, ICMP/TCP result classification, JSON/exit-code semantics, clean interruption behavior, and a real TCP connection against a temporary listener bound only to `127.0.0.1`.
 
-GitHub Actions also runs a real localhost ICMP smoke check on Ubuntu, Windows, and macOS. CI never probes an external target.
+GitHub Actions also runs the full portable test suite (including real localhost TCP) and a real localhost ICMP smoke check on **Ubuntu, Windows and macOS**, plus the Python 3.10–3.14 version matrix. CI never probes an external target.
 
 ## Project scope
 
