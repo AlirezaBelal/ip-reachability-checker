@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from ip_reachability_checker import (
     ConfigurationError,
+    MAX_FILE_LINES,
+    MAX_LINE_LENGTH,
     ReachabilityResult,
     build_ping_command,
     check_icmp,
@@ -77,6 +79,42 @@ class TargetValidationTests(unittest.TestCase):
                 collect_targets([], Path("unused"))
 
 
+class BoundedFileInputTests(unittest.TestCase):
+    def test_file_line_budget_applies_to_duplicates(self):
+        # Previously, an arbitrary number of duplicate IPs could be consumed.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "duplicates.txt"
+            path.write_text("127.0.0.1\n" * (MAX_FILE_LINES + 1), encoding="utf-8")
+            with self.assertRaisesRegex(ConfigurationError, "exceeds 4096 lines"):
+                collect_targets([], path)
+
+    def test_file_line_budget_applies_to_comments_and_blank_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "comments.txt"
+            path.write_text("# ignored\n" * MAX_FILE_LINES + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ConfigurationError, "exceeds 4096 lines"):
+                collect_targets([], path)
+
+    def test_file_accepts_limit_with_a_valid_final_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "exact.txt"
+            path.write_text("# comment\n" * (MAX_FILE_LINES - 1) + "127.0.0.1\n", encoding="utf-8")
+            self.assertEqual(collect_targets([], path), ["127.0.0.1"])
+
+    def test_rejects_long_line_before_attempting_ip_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "long.txt"
+            path.write_text("# initial\n" + "x" * (MAX_LINE_LENGTH + 1) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ConfigurationError, "line 2 exceeds 512 characters"):
+                collect_targets([], path)
+
+    def test_comment_with_maximum_characters_and_crlf_is_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "boundary.txt"
+            path.write_bytes(("#" + "x" * (MAX_LINE_LENGTH - 1) + "\r\n127.0.0.1\r\n").encode())
+            self.assertEqual(collect_targets([], path), ["127.0.0.1"])
+
+
 class PingCommandTests(unittest.TestCase):
     def test_linux_command_is_shell_free_and_bounded(self):
         self.assertEqual(
@@ -115,6 +153,20 @@ class IcmpResultTests(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertNotIn("192.0.2.10", result.detail)
 
+    def test_ping_process_timeout_is_not_a_local_operational_error(self):
+        def runner(command, **kwargs):
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        result = check_icmp("192.0.2.10", runner=runner, system_name="Linux")
+        self.assertEqual(result.status, "unreachable")
+        self.assertEqual(result.detail, "ping timed out")
+
+    def test_nonstandard_ping_exit_is_operational_error(self):
+        runner = lambda command, **kwargs: subprocess.CompletedProcess(command, 2)
+        result = check_icmp("192.0.2.10", runner=runner, system_name="Linux")
+        self.assertEqual(result.status, "error")
+        self.assertEqual(exit_code_for([result]), 2)
+
     def test_short_response_timeout_allows_packet_spacing(self):
         for system in ("Linux", "Windows", "Darwin"):
             def runner(command, **kwargs):
@@ -146,6 +198,14 @@ class TcpResultTests(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertEqual(result.detail, "TCP check failed locally")
         self.assertEqual(exit_code_for([result]), 2)
+
+    def test_permission_error_is_not_reported_as_host_offline(self):
+        def connector(*args, **kwargs):
+            raise PermissionError(errno.EACCES, "permission denied")
+
+        result = check_tcp("127.0.0.1", 443, connector=connector)
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.detail, "TCP check failed locally")
 
     def test_windows_network_error_and_unknown_error_are_distinct(self):
         for winerror, status in ((10065, "unreachable"), (10013, "error")):

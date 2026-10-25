@@ -22,6 +22,8 @@ from typing import Callable, Iterable, Sequence
 MAX_TARGETS = 256
 MAX_WORKERS = 32
 MAX_PING_COUNT = 10
+MAX_FILE_LINES = 4096
+MAX_LINE_LENGTH = 512
 
 _NETWORK_FAILURE_ERRNOS = {
     value
@@ -78,7 +80,20 @@ def normalize_ip(value: str) -> str:
 def _iter_file_targets(path: Path) -> Iterable[str]:
     try:
         with path.open("r", encoding="utf-8-sig") as handle:
-            for line in handle:
+            # A cap on *unique IPs* alone cannot bound a duplicate-only file,
+            # and ordinary iteration can buffer an arbitrarily long line.
+            for line_number in range(1, MAX_FILE_LINES + 2):
+                line = handle.readline(MAX_LINE_LENGTH + 2)
+                if not line:
+                    return
+                if line_number > MAX_FILE_LINES:
+                    raise ConfigurationError(
+                        f"target file exceeds {MAX_FILE_LINES} lines"
+                    )
+                if len(line.rstrip("\r\n")) > MAX_LINE_LENGTH:
+                    raise ConfigurationError(
+                        f"target file line {line_number} exceeds {MAX_LINE_LENGTH} characters"
+                    )
                 value = line.strip()
                 if not value or value.startswith("#"):
                     continue

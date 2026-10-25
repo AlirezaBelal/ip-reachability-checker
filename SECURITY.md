@@ -9,9 +9,9 @@ IP Reachability Checker performs bounded network diagnostics against explicit IP
 - Targets are parsed with Python's `ipaddress.ip_address()` before use.
 - ICMP commands are executed as argument arrays; user input is never passed through a shell.
 - TCP mode accepts one port per run and validates it to `1..65535`.
-- Batch size is capped at 256 unique IPs and concurrency at 32 workers.
+- Batch size is capped at 256 unique IPs and concurrency at 32 workers. File input is also bounded to 4,096 physical lines and 512 characters per line, preventing unbounded duplicate-only input and excessively long reads.
 - Timeouts and ICMP packet counts are bounded.
-- CI integration traffic is restricted to loopback (`127.0.0.1`).
+- CI integration traffic is restricted to loopback (`127.0.0.1`) across Ubuntu, Windows and macOS.
 - There are no runtime credentials, tokens, cookies, or API keys.
 
 ## Operational considerations
