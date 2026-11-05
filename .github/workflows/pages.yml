@@ -1,0 +1,36 @@
+name: GitHub Pages
+on:
+  pull_request:
+    paths: ['docs/**','.github/workflows/pages.yml','tests/browser-demo.test.cjs']
+  push:
+    branches: [master]
+    paths: ['docs/**','.github/workflows/pages.yml','tests/browser-demo.test.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: node --check docs/app.js && node --test tests/browser-demo.test.cjs
+      - run: git diff --check
+  deploy:
+    if: github.event_name != 'pull_request'
+    environment: github-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: docs}
+      - id: deployment
+        uses: actions/deploy-pages@v4
