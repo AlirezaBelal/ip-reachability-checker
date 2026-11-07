@@ -50,4 +50,3 @@ jobs:
         with: {path: docs}
       - id: deployment
         uses: actions/deploy-pages@v4
-

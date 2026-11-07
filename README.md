@@ -181,4 +181,3 @@ MIT License. See `LICENSE`.
 [Open the product website](https://alirezabelal.github.io/ip-reachability-checker/)
 
 The static website explains installation, architecture, output and safety boundaries. Real checks run from the machine executing Python and its network; the website performs no probes. Home, corporate, VPN and remote-server routes can differ.
-

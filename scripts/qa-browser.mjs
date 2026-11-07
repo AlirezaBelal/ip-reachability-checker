@@ -21,5 +21,3 @@ try{for(const [width,height] of [[320,700],[375,812],[390,844],[768,1024],[1024,
  assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert.deepEqual(bad,[]);
  results.push({width,height,url,axeViolations:0,keyboard:'passed',anchors:'passed',disclosures:'passed',overflow:'passed',simulator:'absent',externalRequests:external,consoleErrors:errors});await c.close();
 }}finally{await writeFile(`${out}/results.json`,JSON.stringify(results,null,2));await b.close();await new Promise(r=>server.close(r));}console.log(JSON.stringify(results,null,2));
-
-
