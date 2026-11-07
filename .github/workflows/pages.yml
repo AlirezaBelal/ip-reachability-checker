@@ -1,32 +1,48 @@
 name: GitHub Pages
 on:
   pull_request:
-    paths: ['docs/**','.github/workflows/pages.yml','tests/browser-demo.test.cjs']
+    paths: ['docs/**', '.github/workflows/pages.yml', 'tests/static-website.test.cjs', 'scripts/qa-browser.mjs']
   push:
     branches: [master]
-    paths: ['docs/**','.github/workflows/pages.yml','tests/browser-demo.test.cjs']
+    paths: ['docs/**', '.github/workflows/pages.yml', 'tests/static-website.test.cjs', 'scripts/qa-browser.mjs']
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verify:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: {node-version: 22}
-      - run: node --check docs/app.js && node --test tests/browser-demo.test.cjs
+      - run: node --test tests/static-website.test.cjs
       - run: git diff --check
+      - name: Install isolated browser tooling
+        run: |
+          mkdir -p "$RUNNER_TEMP/ip-browser"
+          cp scripts/qa-browser.mjs "$RUNNER_TEMP/ip-browser/run.mjs"
+          npm install --prefix "$RUNNER_TEMP/ip-browser" --no-save --package-lock=false playwright@1.56.1 @axe-core/playwright@4.10.2
+          "$RUNNER_TEMP/ip-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify local Python product guide at seven widths
+        run: node "$RUNNER_TEMP/ip-browser/run.mjs"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ip-static-browser-qa
+          path: evidence/browser/
+          retention-days: 14
   deploy:
     if: github.event_name != 'pull_request'
+    needs: verify
     environment: github-pages
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
