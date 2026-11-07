@@ -9,3 +9,5 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+
+evidence/

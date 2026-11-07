@@ -176,8 +176,9 @@ This is a lightweight network-diagnostics CLI, not a network scanner, monitoring
 
 MIT License. See `LICENSE`.
 
-## Live browser demo
+## Product website and installation guide
 
-[Open the GitHub Pages demo](https://alirezabelal.github.io/ip-reachability-checker/)
+[Open the product website](https://alirezabelal.github.io/ip-reachability-checker/)
 
-The browser demo runs fixed IPv4, IPv6, ICMP, TCP, timeout, and validation scenarios and displays command examples, structured output, and exit codes. It sends no network probes or socket connections.
+The static website explains installation, architecture, output and safety boundaries. Real checks run from the machine executing Python and its network; the website performs no probes. Home, corporate, VPN and remote-server routes can differ.
+
