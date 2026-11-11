@@ -28,7 +28,7 @@ jobs:
           "$RUNNER_TEMP/ip-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Verify local Python product guide at seven widths
         run: node "$RUNNER_TEMP/ip-browser/run.mjs"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ip-static-browser-qa
